@@ -201,8 +201,8 @@ def hf_to_torch(hf_bertencoder, torch_nntransformer):
             src_layer.attention.self.key.bias, 
             src_layer.attention.self.value.bias
         ]
-        dst_layer.self_attn.in_proj_weight = torch.cat(in_proj_weights, dim=0)
-        dst_layer.self_attn.in_proj_bias = torch.cat(in_proj_biases, dim=0)
+        dst_layer.self_attn.in_proj_weight = nn.Parameter(torch.cat(in_proj_weights, dim=0))
+        dst_layer.self_attn.in_proj_bias = nn.Parameter(torch.cat(in_proj_biases, dim=0))
 
         dst_layer.self_attn.out_proj.weight = src_layer.attention.output.dense.weight
         dst_layer.self_attn.out_proj.bias = src_layer.attention.output.dense.bias
@@ -604,22 +604,22 @@ class BertFastEncoder(nn.Module):
         self.config = config
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=config.dim, 
-                nhead=config.n_heads, 
-                dim_feedforward=config.hidden_dim, 
-                dropout=config.dropout, 
-                activation=config.activation, # TODO make sure that this activation is supported 
+                d_model=config.hidden_size, 
+                nhead=config.num_attention_heads, 
+                dim_feedforward=config.intermediate_size, 
+                dropout=0.1,  # TODO: attention and ffn dropout are both this by default 
+                activation=config.hidden_act, # TODO make sure that this activation is supported 
                 layer_norm_eps=config.layer_norm_eps, # hardcoded in original bert
                 batch_first=True, 
                 norm_first=False, # HF BERT norms after
                 device=None, 
                 dtype=None), 
-            self.n_layers, 
+            config.num_hidden_layers, 
             norm=None) 
 
     def to_hf(self):
         bert_encoder = BertEncoder(self.config)
-        bert_encoder = torch_to_hf(self, bert_encoder)
+        bert_encoder = torch_to_hf(self.encoder, bert_encoder)
         return bert_encoder
 
     def forward(
@@ -635,7 +635,6 @@ class BertFastEncoder(nn.Module):
         output_hidden_states: Optional[bool] = False,
         return_dict: Optional[bool] = True,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
-
         if(
             head_mask is not None
             or encoder_hidden_states is not None
@@ -648,8 +647,10 @@ class BertFastEncoder(nn.Module):
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
 
-        flipped_attention_mask = ~attention_mask.bool()
-        hidden_states = self.encoder(src=hidden_states, src_key_padding_mask=flipped_attention_mask)
+        if attention_mask is not None:
+            attention_mask = ~attention_mask.bool()
+            attention_mask = torch.squeeze(attention_mask)
+        hidden_states = self.encoder(src=hidden_states, src_key_padding_mask=attention_mask)
 
         if not return_dict:
             return tuple(
@@ -677,8 +678,9 @@ class BertEncoder(nn.Module):
         self.gradient_checkpointing = False
     
     def to_fast(self):
+        # TODO be able to deal with in-place changes (eg manually made less layers)
         bert_fast_encoder = BertFastEncoder(self.config)
-        bert_fast_encoder = hf_to_torch(self, bert_fast_encoder)
+        bert_fast_encoder.encoder = hf_to_torch(self, bert_fast_encoder.encoder)
         return bert_fast_encoder
 
     def forward(

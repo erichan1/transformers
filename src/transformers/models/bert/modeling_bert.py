@@ -649,7 +649,9 @@ class BertFastEncoder(nn.Module):
 
         if attention_mask is not None:
             attention_mask = ~attention_mask.bool()
-            attention_mask = torch.squeeze(attention_mask)
+            attention_mask = torch.reshape(attention_mask, (attention_mask.shape[0], attention_mask.shape[-1]))
+            # remove padding from hidden states
+            # hidden_states = torch.nested_tensor(hidden_states)
         hidden_states = self.encoder(src=hidden_states, src_key_padding_mask=attention_mask)
 
         if not return_dict:

@@ -314,75 +314,6 @@ class Transformer(nn.Module):
         super().__init__()
         self.n_layers = config.n_layers
         self.layer = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)])
-        
-        # pulling from https://huggingface.co/distilbert-base-uncased/blob/main/config.json
-
-        # HF distilbert does not norm after all the encoder layers
-        self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=config.dim, 
-                nhead=config.n_heads, 
-                dim_feedforward=config.hidden_dim, 
-                dropout=config.dropout, 
-                activation=config.activation, # TODO make sure that this activation is supported 
-                layer_norm_eps=1e-12, # hardcoded in original distilbert  
-                batch_first=True, 
-                norm_first=False, # HF distilbert norms after
-                device=None, 
-                dtype=None), 
-            self.n_layers, 
-            norm=None) 
-        
-        self.from_hf(self) # for testing purposes 
-        del self.layer
-
-    def from_hf(self, hf_transformer):
-        for src_layer, dst_layer in zip(
-            hf_transformer.layer, self.encoder.layers
-        ):
-            # TODO make sure this doesn't use too much memory
-            in_proj_weight = torch.cat(
-                [
-                    src_layer.attention.q_lin.weight,
-                    src_layer.attention.k_lin.weight,
-                    src_layer.attention.v_lin.weight,
-                ],
-                dim=0
-            )
-            in_proj_bias = torch.cat(
-                [
-                    src_layer.attention.q_lin.bias,
-                    src_layer.attention.k_lin.bias,
-                    src_layer.attention.v_lin.bias,
-                ],
-                dim=0
-            )
-
-            dst_layer.self_attn.in_proj_weight = nn.Parameter(in_proj_weight)
-            dst_layer.self_attn.in_proj_bias = nn.Parameter(in_proj_bias)
-
-            dst_layer.self_attn.out_proj.weight = (
-                src_layer.attention.out_lin.weight
-            )
-            dst_layer.self_attn.out_proj.bias = (
-                src_layer.attention.out_lin.bias
-            )
-
-            dst_layer.linear1.weight = src_layer.ffn.lin1.weight
-            dst_layer.linear1.bias = src_layer.ffn.lin1.bias
-            # TODO make sure load in the same activation (given at src_layer.ffn.activation)
-
-            # this is fine because they're both nn.LayerNorm
-            dst_layer.norm1.load_state_dict(
-                src_layer.sa_layer_norm.state_dict()
-            )
-
-            dst_layer.linear2.weight = src_layer.ffn.lin2.weight
-            dst_layer.linear2.bias = src_layer.ffn.lin2.bias
-
-            dst_layer.norm2.load_state_dict(
-                src_layer.output_layer_norm.state_dict()
-            )
 
     def forward(
         self,
@@ -407,16 +338,29 @@ class Transformer(nn.Module):
                 Tuple of length n_layers with the attention weights from each layer
                 Optional: only if output_attentions=True
         """
-        # if(head_mask is not None):
-        #     raise Exception("Does not support head mask arg")
-        # if(output_attentions):
-        #     raise Exception("Does not support outputting attentions")
-        # if(output_hidden_states):
-        #     raise Exception("Does not support outputting all hidden states")
-        attn_mask = ~attn_mask.bool()
-        hidden_state = self.encoder(src=x, src_key_padding_mask=attn_mask)
-        all_hidden_states = None
-        all_attentions = None
+        all_hidden_states = () if output_hidden_states else None
+        all_attentions = () if output_attentions else None
+
+        hidden_state = x
+        for i, layer_module in enumerate(self.layer):
+            if output_hidden_states:
+                all_hidden_states = all_hidden_states + (hidden_state,)
+
+            layer_outputs = layer_module(
+                x=hidden_state, attn_mask=attn_mask, head_mask=head_mask[i], output_attentions=output_attentions
+            )
+            hidden_state = layer_outputs[-1]
+
+            if output_attentions:
+                assert len(layer_outputs) == 2
+                attentions = layer_outputs[0]
+                all_attentions = all_attentions + (attentions,)
+            else:
+                assert len(layer_outputs) == 1
+
+        # Add last layer
+        if output_hidden_states:
+            all_hidden_states = all_hidden_states + (hidden_state,)
 
         if not return_dict:
             return tuple(v for v in [hidden_state, all_hidden_states, all_attentions] if v is not None)

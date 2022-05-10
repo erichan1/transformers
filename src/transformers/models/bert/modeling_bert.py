@@ -648,7 +648,7 @@ class BertFastEncoder(nn.Module):
         all_self_attentions = () if output_attentions else None
 
         if attention_mask is not None:
-            attention_mask = ~attention_mask.bool()
+            attention_mask = attention_mask.bool()
             attention_mask = torch.reshape(attention_mask, (attention_mask.shape[0], attention_mask.shape[-1]))
             lengths = torch.sum(attention_mask, 1)
             hidden_states = torch.nested_tensor(

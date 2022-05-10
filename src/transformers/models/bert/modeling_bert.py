@@ -598,7 +598,7 @@ class BertLayer(nn.Module):
 class BertFastEncoder(nn.Module):
     def __init__(self, config):
         if config.is_decoder:
-            raise Exception("Does not support")
+            raise Exception("BertFastEncoder does not support decoder config")
 
         super().__init__()
         self.config = config
@@ -636,28 +636,43 @@ class BertFastEncoder(nn.Module):
         return_dict: Optional[bool] = True,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
         if(
-            head_mask is not None
+            (head_mask is not None and not all([m is None for m in head_mask])) 
             or encoder_hidden_states is not None
             or encoder_attention_mask is not None
             or past_key_values is not None
             or use_cache==True
         ):
-            raise Exception("Does not support")
+            input_dict = {
+                'head_mask': head_mask, 
+                'encoder_hidden_states': encoder_hidden_states,
+                'encoder_attention_mask': encoder_attention_mask,
+                'past_key_values': past_key_values,
+                'use_cache': use_cache,
+            }
+            not_none = [k if input_dict[k] is not None else None for k in input_dict.keys()] 
+            exception_str = f"BertFastEncoder does not support inputs {not_none}"
+            raise Exception(exception_str)
 
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
-
+        
+        # TODO: BertFastEncoder currently gets passed a no-op mask. Avoid this computation in that case. 
         if attention_mask is not None:
-            attention_mask = attention_mask.bool()
+            attention_mask = attention_mask.bool() # 0->keep -inf->mask
             attention_mask = torch.reshape(attention_mask, (attention_mask.shape[0], attention_mask.shape[-1]))
-            lengths = torch.sum(attention_mask, 1)
-            hidden_states = torch.nested_tensor(
-                [t[:l] for (t, l) in zip(hidden_states, lengths)],
-                dtype=hidden_states.dtype,
-                device=hidden_states.device,
-            )
-            attention_mask = None
+            seqlen = attention_mask.shape[1]
+            lengths = torch.sum(~attention_mask, 1)
+            if(not all([l == seqlen for l in lengths])):
+                hidden_states = torch.nested_tensor(
+                    [t[:l] for (t, l) in zip(hidden_states, lengths)],
+                    dtype=hidden_states.dtype,
+                    device=hidden_states.device,
+                )
+                attention_mask = None
+        
         hidden_states = self.encoder(src=hidden_states, src_key_padding_mask=attention_mask)
+        if hidden_states.is_nested:
+            hidden_states = hidden_states.to_padded_tensor(0.)
 
         if not return_dict:
             return tuple(
@@ -1697,7 +1712,6 @@ class BertForSequenceClassification(BertPreTrainedModel):
             `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
         outputs = self.bert(
             input_ids,
             attention_mask=attention_mask,

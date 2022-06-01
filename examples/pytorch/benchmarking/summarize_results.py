@@ -20,6 +20,9 @@ def get_parser():
     return parser
 
 def summarize_results(n_repeat, filename='log.csv'):
+    """
+    Deprecated. 
+    """
     lst = [[] for _ in range(n_repeat)]
     with open(filename, 'r') as f:
         for i, line in enumerate(f):
@@ -29,7 +32,20 @@ def summarize_results(n_repeat, filename='log.csv'):
         for j in range(len(lst[i])):
             print(lst[i][j], end='')
 
+def summarize_results2(n_repeat, filename='log.csv'):
+    """
+    Puts lines in each block (of size n_repeat) onto one line, with space delineation
+    Easy to copy paste into google sheets
+    """
+    lst = []
+    with open(filename, 'r') as f:
+        for i, line in enumerate(f):
+            lst.append(line.rstrip())
+            if((i+1) % n_repeat == 0):
+                print(' '.join(lst))
+                lst = []
+
 if __name__=="__main__":
     parser = get_parser()
     args = parser.parse_args()
-    summarize_results(n_repeat=args.n_repeat, filename=args.filename)
+    summarize_results2(n_repeat=args.n_repeat, filename=args.filename)

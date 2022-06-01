@@ -239,7 +239,7 @@ def benchmark(num_batches, batch_size, avg_seqlen, max_seqlen, seqlen_stdev, is_
 
     if("hf" in benchmarks and "bt" in benchmarks):
         lgr.info(f"BT as prop of HF {hf_t / bt_t}")
-        n_failures, max_diff, n_tested = numerical_test(out, out2, 0, 1e-2) # absolute difference of 1 percent
+        n_failures, max_diff, n_tested = numerical_test(out, out2, 0, 1e-2) # absolute difference of 0.01 logit
         if n_failures == 0:
             test_str = f"HF/BT PASS"
         else:
@@ -248,7 +248,7 @@ def benchmark(num_batches, batch_size, avg_seqlen, max_seqlen, seqlen_stdev, is_
 
     if("hf" in benchmarks and "nn" in benchmarks):
         lgr.info(f"NN as prop of HF {hf_t / nn_t}")
-        n_failures, max_diff, n_tested = numerical_test(out, out3, 0, 1e-2) # absolute difference of 1 percent
+        n_failures, max_diff, n_tested = numerical_test(out, out3, 0, 1e-2) # absolute difference of 0.01 logit
         if n_failures == 0:
             test_str = f"HF/NNEncoder test PASS"
         else:
@@ -257,7 +257,7 @@ def benchmark(num_batches, batch_size, avg_seqlen, max_seqlen, seqlen_stdev, is_
 
     if("bt" in benchmarks and "nn" in benchmarks):
         lgr.info(f"BT as prop of NN {nn_t / bt_t}")
-        n_failures, max_diff, n_tested = numerical_test(out2, out3, 0, 1e-2) # absolute difference of 1 percent
+        n_failures, max_diff, n_tested = numerical_test(out2, out3, 0, 1e-2) # absolute difference of 0.01 logit
         if n_failures == 0:
             test_str = f"NNencoder/BT test PASS"
         else:

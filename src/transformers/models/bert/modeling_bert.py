@@ -780,22 +780,17 @@ class BertEncoder(nn.Module):
 
             if self.use_fastpath:
                 if attention_mask is not None:
-                    attention_mask = attention_mask.bool() # 0->false->keep -inf->true->mask
+                    # attention mask comes in with values 0 and -inf. we convert to torch.nn.TransformerEncoder style bool mask 
+                    # 0->false->keep this token -inf->true->mask this token
+                    attention_mask = attention_mask.bool() 
                     attention_mask = torch.reshape(attention_mask, (attention_mask.shape[0], attention_mask.shape[-1]))
-                    # hidden_states = torch._nested_tensor_from_mask(hidden_states, ~attention_mask)
                     seqlen = attention_mask.shape[1]
                     lengths = torch.sum(~attention_mask, 1)
                     if(not all([l == seqlen for l in lengths])):
-                        hidden_states = torch.nested_tensor(
-                            [t[:l] for (t, l) in zip(hidden_states, lengths)],
-                            dtype=hidden_states.dtype,
-                            device=hidden_states.device,
-                        )
+                        hidden_states = torch._nested_tensor_from_mask(hidden_states, ~attention_mask)
                     attention_mask = None
                 
-                hidden_states = call_fastpath(src=hidden_states, attention_mask=None, bert_layer=layer_module)
-                if hidden_states.is_nested:
-                    hidden_states = hidden_states.to_padded_tensor(0.)
+                hidden_states = call_fastpath(src=hidden_states, attention_mask=attention_mask, bert_layer=layer_module)
             else:
                 if self.gradient_checkpointing and self.training:
 
@@ -837,6 +832,9 @@ class BertEncoder(nn.Module):
                     all_self_attentions = all_self_attentions + (layer_outputs[1],)
                     if self.config.add_cross_attention:
                         all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+        
+        if hidden_states.is_nested:
+            hidden_states = hidden_states.to_padded_tensor(0.)
 
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)

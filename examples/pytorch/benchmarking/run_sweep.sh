@@ -85,11 +85,11 @@
 # python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 64 --max-seqlen 256 --seqlen-stdev 0 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
 
 # large config with varying seqlen
-# python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 0 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
-# python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 1 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
-# python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 5 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
-# python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 10 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
-# python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 20 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
+python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 0 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
+python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 1 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
+python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 5 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
+python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 10 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
+python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 235 --max-seqlen 256 --seqlen-stdev 20 --is-cuda True --is-large False --is-half True --use-mask True --benchmarks bt hf
 
 
 # summarize

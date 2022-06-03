@@ -209,11 +209,13 @@ def benchmark(num_batches, batch_size, avg_seqlen, max_seqlen, seqlen_stdev, is_
 
     batches = [get_batch(batch_size, avg_seqlen, max_seqlen, seqlen_stdev, vocab_size) for _ in range(num_batches)]
     eval_inputs = torch.stack([batch[0] for batch in batches]).to(device)
-    masks = torch.stack([batch[2].to(device) for batch in batches]) # 0 == pad, 1 == keep
+    masks = torch.stack([batch[2] for batch in batches]).to(device) # 0 == pad, 1 == keep
 
     # DEBUG
-    # eval_inputs = torch.Tensor([[[20464, 2069]]]).to(device).to(torch.int)
-    # print(eval_inputs, eval_inputs.shape)
+    # lgr.info(f"DEBUG")
+    # eval_inputs = torch.Tensor([[[20464, 2069, 1]]]).to(device).to(torch.int)
+    # masks = torch.Tensor([[[1, 1, 0]]]).to(device)
+    # print(masks.shape, eval_inputs.shape)
 
     if("hf" in benchmarks):
         with torch.no_grad():

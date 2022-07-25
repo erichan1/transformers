@@ -38,7 +38,7 @@ from ...modeling_tf_utils import (
     get_initializer,
     unpack_inputs,
 )
-from ...tf_utils import shape_list
+from ...tf_utils import shape_list, stable_softmax
 from ...utils import add_code_sample_docstrings, add_start_docstrings, add_start_docstrings_to_model_forward, logging
 from .configuration_deberta_v2 import DebertaV2Config
 
@@ -97,7 +97,7 @@ class TFDebertaV2XSoftmax(tf.keras.layers.Layer):
 
         rmask = tf.logical_not(tf.cast(mask, tf.bool))
         output = tf.where(rmask, float("-inf"), inputs)
-        output = tf.nn.softmax(output, self.axis)
+        output = stable_softmax(output, self.axis)
         output = tf.where(rmask, 0.0, output)
         return output
 
@@ -522,26 +522,13 @@ def pos_dynamic_expand(pos_index, p2c_att, key_layer):
     return tf.broadcast_to(pos_index, shapes)
 
 
-def take_along_axis(x, indices, gather_axis):
-    if gather_axis < 0:
-        gather_axis = tf.rank(x) + gather_axis
+def take_along_axis(x, indices):
+    # Only a valid port of np.take_along_axis when the gather axis is -1
 
-    if gather_axis != tf.rank(x) - 1:
-        pre_roll = tf.rank(x) - 1 - gather_axis
-        permutation = tf.roll(tf.range(tf.rank(x)), pre_roll, axis=0)
-        x = tf.transpose(x, perm=permutation)
-        indices = tf.transpose(indices, perm=permutation)
-    else:
-        pre_roll = 0
-
-    flat_x = tf.reshape(x, (-1, tf.shape(x)[-1]))
-    flat_indices = tf.reshape(indices, (-1, tf.shape(indices)[-1]))
+    flat_x = tf.reshape(x, (-1, x.shape[-1]))
+    flat_indices = tf.reshape(indices, (-1, indices.shape[-1]))
     gathered = tf.gather(flat_x, flat_indices, batch_dims=1)
-    gathered = tf.reshape(gathered, tf.shape(indices))
-
-    if pre_roll != 0:
-        permutation = tf.roll(tf.range(tf.rank(x)), -pre_roll, axis=0)
-        gathered = tf.transpose(gathered, perm=permutation)
+    gathered = tf.reshape(gathered, indices.shape)
 
     return gathered
 
@@ -604,14 +591,14 @@ class TFDebertaV2DisentangledSelfAttention(tf.keras.layers.Layer):
 
             if not self.share_att_key:
                 if "c2p" in self.pos_att_type:
-                    self.pos_proj = tf.keras.layers.Dense(
+                    self.pos_key_proj = tf.keras.layers.Dense(
                         self.all_head_size,
                         kernel_initializer=get_initializer(config.initializer_range),
                         name="pos_proj",
                         use_bias=True,
                     )
                 if "p2c" in self.pos_att_type:
-                    self.pos_q_proj = tf.keras.layers.Dense(
+                    self.pos_query_proj = tf.keras.layers.Dense(
                         self.all_head_size,
                         kernel_initializer=get_initializer(config.initializer_range),
                         name="pos_q_proj",
@@ -620,11 +607,15 @@ class TFDebertaV2DisentangledSelfAttention(tf.keras.layers.Layer):
         self.dropout = TFDebertaV2StableDropout(config.attention_probs_dropout_prob, name="dropout")
 
     def transpose_for_scores(self, tensor: tf.Tensor, attention_heads: int) -> tf.Tensor:
-        shape = shape_list(tensor)[:-1] + [attention_heads, -1]
+        tensor_shape = shape_list(tensor)
+        # In graph mode mode, we can't reshape with -1 as the final dimension if the first dimension (batch size) is None
+        shape = tensor_shape[:-1] + [attention_heads, tensor_shape[-1] // attention_heads]
         # Reshape from [batch_size, seq_length, all_head_size] to [batch_size, seq_length, num_attention_heads, attention_head_size]
         tensor = tf.reshape(tensor=tensor, shape=shape)
+        tensor = tf.transpose(tensor, perm=[0, 2, 1, 3])
         x_shape = shape_list(tensor)
-        return tf.reshape(tf.transpose(tensor, perm=[0, 2, 1, 3]), shape=[-1, x_shape[1], x_shape[-1]])
+        tensor = tf.reshape(tensor, shape=[-1, x_shape[-2], x_shape[-1]])
+        return tensor
 
     def call(
         self,
@@ -686,7 +677,6 @@ class TFDebertaV2DisentangledSelfAttention(tf.keras.layers.Layer):
 
         if rel_att is not None:
             attention_scores = attention_scores + rel_att
-        attention_scores = attention_scores
         attention_scores = tf.reshape(
             attention_scores,
             (-1, self.num_attention_heads, shape_list(attention_scores)[-2], shape_list(attention_scores)[-1]),
@@ -706,9 +696,12 @@ class TFDebertaV2DisentangledSelfAttention(tf.keras.layers.Layer):
             ),
             [0, 2, 1, 3],
         )
-        new_context_layer_shape = shape_list(context_layer)[:-2] + [
-            -1,
-        ]
+        # Set the final dimension here explicitly.
+        # Calling tf.reshape(context_layer, (*context_layer_shape[:-2], -1)) raises an error when executing
+        # the model in graph mode as context_layer is reshaped to (None, 7, None) and Dense layer in TFDebertaV2SelfOutput
+        # requires final input dimension to be defined
+        context_layer_shape = shape_list(context_layer)
+        new_context_layer_shape = context_layer_shape[:-2] + [context_layer_shape[-2] * context_layer_shape[-1]]
         context_layer = tf.reshape(context_layer, new_context_layer_shape)
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
         return outputs
@@ -769,7 +762,6 @@ class TFDebertaV2DisentangledSelfAttention(tf.keras.layers.Layer):
                     tf.squeeze(c2p_pos, 0),
                     [shape_list(query_layer)[0], shape_list(query_layer)[1], shape_list(relative_pos)[-1]],
                 ),
-                -1,
             )
             score += c2p_att / scale
 
@@ -797,7 +789,6 @@ class TFDebertaV2DisentangledSelfAttention(tf.keras.layers.Layer):
                         tf.squeeze(p2c_pos, 0),
                         [shape_list(query_layer)[0], shape_list(key_layer)[-2], shape_list(key_layer)[-2]],
                     ),
-                    -1,
                 ),
                 [0, 2, 1],
             )
@@ -821,7 +812,7 @@ class TFDebertaV2Embeddings(tf.keras.layers.Layer):
         self.position_biased_input = getattr(config, "position_biased_input", True)
         self.initializer_range = config.initializer_range
         if self.embedding_size != config.hidden_size:
-            self.embed_proj = tf.keras.layers.Dense(config.hidden_size, bias=False)
+            self.embed_proj = tf.keras.layers.Dense(config.hidden_size, use_bias=False)
         self.LayerNorm = tf.keras.layers.LayerNormalization(epsilon=config.layer_norm_eps, name="LayerNorm")
         self.dropout = TFDebertaV2StableDropout(config.hidden_dropout_prob, name="dropout")
 
@@ -870,7 +861,8 @@ class TFDebertaV2Embeddings(tf.keras.layers.Layer):
         Returns:
             final_embeddings (`tf.Tensor`): output embedding tensor.
         """
-        assert not (input_ids is None and inputs_embeds is None)
+        if input_ids is None and inputs_embeds is None:
+            raise ValueError("Need to provide either `input_ids` or `input_embeds`.")
 
         if input_ids is not None:
             inputs_embeds = tf.gather(params=self.weight, indices=input_ids)
@@ -1028,7 +1020,6 @@ class TFDebertaV2MainLayer(tf.keras.layers.Layer):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         training: bool = False,
-        **kwargs,
     ) -> Union[TFBaseModelOutput, Tuple[tf.Tensor]]:
 
         if input_ids is not None and inputs_embeds is not None:
@@ -1164,7 +1155,7 @@ DEBERTA_INPUTS_DOCSTRING = r"""
             Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
             more detail.
         return_dict (`bool`, *optional*):
-            Whether or not to return a [`~transformers.file_utils.ModelOutput``] instead of a plain tuple.
+            Whether or not to return a [`~utils.ModelOutput``] instead of a plain tuple.
 """
 
 
@@ -1198,7 +1189,6 @@ class TFDebertaV2Model(TFDebertaV2PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         training: Optional[bool] = False,
-        **kwargs,
     ) -> Union[TFBaseModelOutput, Tuple[tf.Tensor]]:
         outputs = self.deberta(
             input_ids=input_ids,
@@ -1259,7 +1249,6 @@ class TFDebertaV2ForMaskedLM(TFDebertaV2PreTrainedModel, TFMaskedLanguageModelin
         return_dict: Optional[bool] = None,
         labels: Optional[Union[np.ndarray, tf.Tensor]] = None,
         training: Optional[bool] = False,
-        **kwargs,
     ) -> Union[TFMaskedLMOutput, Tuple[tf.Tensor]]:
         r"""
         labels (`tf.Tensor` or `np.ndarray` of shape `(batch_size, sequence_length)`, *optional*):
@@ -1346,7 +1335,6 @@ class TFDebertaV2ForSequenceClassification(TFDebertaV2PreTrainedModel, TFSequenc
         return_dict: Optional[bool] = None,
         labels: Optional[Union[np.ndarray, tf.Tensor]] = None,
         training: Optional[bool] = False,
-        **kwargs,
     ) -> Union[TFSequenceClassifierOutput, Tuple[tf.Tensor]]:
         r"""
         labels (`tf.Tensor` or `np.ndarray` of shape `(batch_size,)`, *optional*):
@@ -1430,7 +1418,6 @@ class TFDebertaV2ForTokenClassification(TFDebertaV2PreTrainedModel, TFTokenClass
         return_dict: Optional[bool] = None,
         labels: Optional[Union[np.ndarray, tf.Tensor]] = None,
         training: Optional[bool] = False,
-        **kwargs,
     ) -> Union[TFTokenClassifierOutput, Tuple[tf.Tensor]]:
         r"""
         labels (`tf.Tensor` or `np.ndarray` of shape `(batch_size, sequence_length)`, *optional*):
@@ -1510,7 +1497,6 @@ class TFDebertaV2ForQuestionAnswering(TFDebertaV2PreTrainedModel, TFQuestionAnsw
         start_positions: Optional[Union[np.ndarray, tf.Tensor]] = None,
         end_positions: Optional[Union[np.ndarray, tf.Tensor]] = None,
         training: Optional[bool] = False,
-        **kwargs,
     ) -> Union[TFQuestionAnsweringModelOutput, Tuple[tf.Tensor]]:
         r"""
         start_positions (`tf.Tensor` or `np.ndarray` of shape `(batch_size,)`, *optional*):

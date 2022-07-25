@@ -29,6 +29,7 @@ from requests import HTTPError
 from .dynamic_module_utils import custom_object_save
 from .utils import (
     FEATURE_EXTRACTOR_NAME,
+    HUGGINGFACE_CO_RESOLVE_ENDPOINT,
     EntryNotFoundError,
     PushToHubMixin,
     RepositoryNotFoundError,
@@ -117,9 +118,9 @@ class BatchFeature(UserDict):
         Convert the inner content to tensors.
 
         Args:
-            tensor_type (`str` or [`~file_utils.TensorType`], *optional*):
-                The type of tensors to use. If `str`, should be one of the values of the enum
-                [`~file_utils.TensorType`]. If `None`, no modification is done.
+            tensor_type (`str` or [`~utils.TensorType`], *optional*):
+                The type of tensors to use. If `str`, should be one of the values of the enum [`~utils.TensorType`]. If
+                `None`, no modification is done.
         """
         if tensor_type is None:
             return self
@@ -328,7 +329,7 @@ class FeatureExtractionMixin(PushToHubMixin):
                 </Tip>
 
             kwargs:
-                Additional key word arguments passed along to the [`~file_utils.PushToHubMixin.push_to_hub`] method.
+                Additional key word arguments passed along to the [`~utils.PushToHubMixin.push_to_hub`] method.
         """
         if os.path.isfile(save_directory):
             raise AssertionError(f"Provided path ({save_directory}) should be a directory, not a file")
@@ -352,6 +353,8 @@ class FeatureExtractionMixin(PushToHubMixin):
         if push_to_hub:
             url = self._push_to_hub(repo, commit_message=commit_message)
             logger.info(f"Feature extractor pushed to the hub in this commit: {url}")
+
+        return [output_feature_extractor_file]
 
     @classmethod
     def get_feature_extractor_dict(
@@ -427,12 +430,17 @@ class FeatureExtractionMixin(PushToHubMixin):
             raise EnvironmentError(
                 f"{pretrained_model_name_or_path} does not appear to have a file named {FEATURE_EXTRACTOR_NAME}."
             )
-        except HTTPError:
+        except HTTPError as err:
             raise EnvironmentError(
-                "We couldn't connect to 'https://huggingface.co/' to load this model and it looks like "
-                f"{pretrained_model_name_or_path} is not the path to a directory conaining a "
-                f"{FEATURE_EXTRACTOR_NAME} file.\nCheckout your internet connection or see how to run the library in "
-                "offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."
+                f"There was a specific connection error when trying to load {pretrained_model_name_or_path}:\n{err}"
+            )
+        except ValueError:
+            raise EnvironmentError(
+                f"We couldn't connect to '{HUGGINGFACE_CO_RESOLVE_ENDPOINT}' to load this model, couldn't find it in"
+                f" the cached files and it looks like {pretrained_model_name_or_path} is not the path to a directory"
+                f" containing a {FEATURE_EXTRACTOR_NAME} file.\nCheckout your internet connection or see how to run"
+                " the library in offline mode at"
+                " 'https://huggingface.co/docs/transformers/installation#offline-mode'."
             )
         except EnvironmentError:
             raise EnvironmentError(
@@ -457,7 +465,8 @@ class FeatureExtractionMixin(PushToHubMixin):
             logger.info(f"loading feature extractor configuration file {feature_extractor_file}")
         else:
             logger.info(
-                f"loading feature extractor configuration file {feature_extractor_file} from cache at {resolved_feature_extractor_file}"
+                f"loading feature extractor configuration file {feature_extractor_file} from cache at"
+                f" {resolved_feature_extractor_file}"
             )
 
         return feature_extractor_dict, kwargs

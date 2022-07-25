@@ -24,7 +24,8 @@ from torch import nn
 
 from ...activations import ACT2FN, gelu
 from ...modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling
-from ...modeling_utils import PreTrainedModel, apply_chunking_to_forward
+from ...modeling_utils import PreTrainedModel
+from ...pytorch_utils import apply_chunking_to_forward
 from ...utils import (
     ModelOutput,
     add_start_docstrings,
@@ -868,12 +869,13 @@ LUKE_INPUTS_DOCSTRING = r"""
             Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
             more detail.
         return_dict (`bool`, *optional*):
-            Whether or not to return a [`~file_utils.ModelOutput`] instead of a plain tuple.
+            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
 """
 
 
 @add_start_docstrings(
-    "The bare LUKE model transformer outputting raw hidden-states for both word tokens and entities without any specific head on top.",
+    "The bare LUKE model transformer outputting raw hidden-states for both word tokens and entities without any"
+    " specific head on top.",
     LUKE_START_DOCSTRING,
 )
 class LukeModel(LukePreTrainedModel):
@@ -952,11 +954,11 @@ class LukeModel(LukePreTrainedModel):
         >>> entities = [
         ...     "Beyoncé",
         ...     "Los Angeles",
-        >>> ]  # Wikipedia entity titles corresponding to the entity mentions "Beyoncé" and "Los Angeles"
+        ... ]  # Wikipedia entity titles corresponding to the entity mentions "Beyoncé" and "Los Angeles"
         >>> entity_spans = [
         ...     (0, 7),
         ...     (17, 28),
-        >>> ]  # character-based entity spans corresponding to "Beyoncé" and "Los Angeles"
+        ... ]  # character-based entity spans corresponding to "Beyoncé" and "Los Angeles"
 
         >>> encoding = tokenizer(
         ...     text, entities=entities, entity_spans=entity_spans, add_prefix_space=True, return_tensors="pt"
@@ -1074,7 +1076,7 @@ class LukeModel(LukePreTrainedModel):
             raise ValueError(f"Wrong shape for attention_mask (shape {attention_mask.shape})")
 
         extended_attention_mask = extended_attention_mask.to(dtype=self.dtype)  # fp16 compatibility
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+        extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(self.dtype).min
         return extended_attention_mask
 
 
@@ -1227,13 +1229,15 @@ class LukeForMaskedLM(LukePreTrainedModel):
                 loss = mlm_loss
 
         mep_loss = None
-        entity_logits = self.entity_predictions(outputs.entity_last_hidden_state)
-        if entity_labels is not None:
-            mep_loss = self.loss_fn(entity_logits.view(-1, self.config.entity_vocab_size), entity_labels.view(-1))
-            if loss is None:
-                loss = mep_loss
-            else:
-                loss = loss + mep_loss
+        entity_logits = None
+        if outputs.entity_last_hidden_state is not None:
+            entity_logits = self.entity_predictions(outputs.entity_last_hidden_state)
+            if entity_labels is not None:
+                mep_loss = self.loss_fn(entity_logits.view(-1, self.config.entity_vocab_size), entity_labels.view(-1))
+                if loss is None:
+                    loss = mep_loss
+                else:
+                    loss = loss + mep_loss
 
         if not return_dict:
             output = (logits, entity_logits, outputs.hidden_states, outputs.entity_hidden_states, outputs.attentions)
@@ -1434,7 +1438,7 @@ class LukeForEntityPairClassification(LukePreTrainedModel):
         >>> entity_spans = [
         ...     (0, 7),
         ...     (17, 28),
-        >>> ]  # character-based entity spans corresponding to "Beyoncé" and "Los Angeles"
+        ... ]  # character-based entity spans corresponding to "Beyoncé" and "Los Angeles"
         >>> inputs = tokenizer(text, entity_spans=entity_spans, return_tensors="pt")
         >>> outputs = model(**inputs)
         >>> logits = outputs.logits

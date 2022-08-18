@@ -179,74 +179,6 @@ def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
     return model
 
 
-def torch_to_hf(torch_nntransformer, hf_bertencoder):
-    for src_layer, dst_layer in zip(torch_nntransformer.layers, hf_bertencoder.layer):
-        w_q, w_k, w_v = src_layer.self_attn.in_proj_weight.chunk(3, dim=0)
-        b_q, b_k, b_v = src_layer.self_attn.in_proj_bias.chunk(3, dim=0)
-
-        dst_layer.attention.self.query.weight = torch.nn.Parameter(w_q)
-        dst_layer.attention.self.query.bias = torch.nn.Parameter(b_q)
-        dst_layer.attention.self.key.weight = torch.nn.Parameter(w_k)
-        dst_layer.attention.self.key.bias = torch.nn.Parameter(b_k)
-        dst_layer.attention.self.value.weight = torch.nn.Parameter(w_v)
-        dst_layer.attention.self.value.bias = torch.nn.Parameter(b_v)
-
-        dst_layer.attention.output.dense.weight = src_layer.self_attn.out_proj.weight
-        dst_layer.attention.output.dense.bias = src_layer.self_attn.out_proj.bias
-
-        dst_layer.intermediate.dense.weight = src_layer.linear1.weight
-        dst_layer.intermediate.dense.bias = src_layer.linear1.bias
-
-        dst_layer.output.dense.weight = src_layer.linear2.weight
-        dst_layer.output.dense.bias = src_layer.linear2.bias
-
-        dst_layer.attention.output.LayerNorm = src_layer.norm1
-        dst_layer.output.LayerNorm = src_layer.norm2
-    return hf_bertencoder
-
-
-def hf_to_torch(hf_bertencoder, torch_nntransformer):
-    for src_layer, dst_layer in zip(hf_bertencoder.layer, torch_nntransformer.layers):
-        in_proj_weights = [
-            src_layer.attention.self.query.weight, 
-            src_layer.attention.self.key.weight, 
-            src_layer.attention.self.value.weight
-        ]
-        in_proj_biases = [
-            src_layer.attention.self.query.bias, 
-            src_layer.attention.self.key.bias, 
-            src_layer.attention.self.value.bias
-        ]
-        dst_layer.self_attn.in_proj_weight = nn.Parameter(torch.cat(in_proj_weights, dim=0))
-        dst_layer.self_attn.in_proj_bias = nn.Parameter(torch.cat(in_proj_biases, dim=0))
-
-        dst_layer.self_attn.out_proj.weight = src_layer.attention.output.dense.weight
-        dst_layer.self_attn.out_proj.bias = src_layer.attention.output.dense.bias
-
-        dst_layer.linear1.weight = src_layer.intermediate.dense.weight 
-        dst_layer.linear1.bias = src_layer.intermediate.dense.bias
-
-        dst_layer.linear2.weight = src_layer.output.dense.weight
-        dst_layer.linear2.bias = src_layer.output.dense.bias 
-
-        dst_layer.norm1 = src_layer.attention.output.LayerNorm 
-        dst_layer.norm2 = src_layer.output.LayerNorm
-    return torch_nntransformer
-
-def model_to_fast(automodel):
-    """
-    Converts a top level HF model (like BertForPreTraining or BertForMaskedLM) to fast version
-    """
-    if automodel.bert.encoder is BertEncoder:
-        automodel.bert.encoder = automodel.bert.encoder.to_fast()
-
-def model_to_regular(automodel):
-    """
-    Converts a top level HF model (like BertForPreTraining or BertForMaskedLM) to regular version
-    """
-    if automodel.bert.encoder is BertFastEncoder:
-        automodel.bert.encoder = automodel.bert.encoder.to_hf()
-
 def call_fastpath(src, attention_mask, bert_layer):
     in_proj_weight = bert_layer.attention.self.in_proj_weight
     in_proj_bias = bert_layer.attention.self.in_proj_bias
@@ -660,103 +592,6 @@ class BertLayer(nn.Module):
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
-class BertFastEncoder(nn.Module):
-    def __init__(self, config):
-        if config.is_decoder:
-            raise Exception("BertFastEncoder does not support decoder config")
-
-        super().__init__()
-        self.config = config
-        self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=config.hidden_size, 
-                nhead=config.num_attention_heads, 
-                dim_feedforward=config.intermediate_size, 
-                dropout=0.1,  # TODO: attention and ffn dropout are both this by default 
-                activation=config.hidden_act, # TODO make sure that this activation is supported 
-                layer_norm_eps=config.layer_norm_eps, # hardcoded in original bert
-                batch_first=True, 
-                norm_first=False, # HF BERT norms after
-                device=None, 
-                dtype=None), 
-            config.num_hidden_layers, 
-            norm=None) 
-
-    def to_hf(self):
-        bert_encoder = BertEncoder(self.config)
-        bert_encoder = torch_to_hf(self.encoder, bert_encoder)
-        return bert_encoder
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-    ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
-        if(
-            (head_mask is not None and not all([m is None for m in head_mask])) 
-            or encoder_hidden_states is not None
-            or encoder_attention_mask is not None
-            or past_key_values is not None
-            or use_cache==True
-        ):
-            input_dict = {
-                'head_mask': head_mask, 
-                'encoder_hidden_states': encoder_hidden_states,
-                'encoder_attention_mask': encoder_attention_mask,
-                'past_key_values': past_key_values,
-                'use_cache': use_cache,
-            }
-            not_none = [k if input_dict[k] is not None else None for k in input_dict.keys()] 
-            exception_str = f"BertFastEncoder does not support inputs {not_none}"
-            raise Exception(exception_str)
-
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        
-        if attention_mask is not None:
-            attention_mask = attention_mask.bool() # 0->false->keep -inf->true->mask
-            attention_mask = torch.reshape(attention_mask, (attention_mask.shape[0], attention_mask.shape[-1]))
-        #     # hidden_states = torch._nested_tensor_from_mask(hidden_states, ~attention_mask)
-        #     seqlen = attention_mask.shape[1]
-        #     lengths = torch.sum(~attention_mask, 1)
-        #     if(not all([l == seqlen for l in lengths])):
-        #         hidden_states = torch.nested_tensor(
-        #             [t[:l] for (t, l) in zip(hidden_states, lengths)],
-        #             dtype=hidden_states.dtype,
-        #             device=hidden_states.device,
-        #         )
-        #     attention_mask = None
-        
-        hidden_states = self.encoder(src=hidden_states, src_key_padding_mask=attention_mask)
-        if hidden_states.is_nested:
-            hidden_states = hidden_states.to_padded_tensor(0.)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    all_hidden_states,
-                    all_self_attentions,
-                ]
-                if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=None,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=None,
-        )
-
 class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -764,11 +599,6 @@ class BertEncoder(nn.Module):
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
         self.use_fastpath = False
-    
-    def to_torch(self):
-        bert_fast_encoder = BertFastEncoder(self.config)
-        bert_fast_encoder.encoder = hf_to_torch(self, bert_fast_encoder.encoder)
-        return bert_fast_encoder
 
     def to_fast(self):
         for layer in self.layer:

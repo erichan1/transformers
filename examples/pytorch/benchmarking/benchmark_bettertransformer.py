@@ -190,7 +190,8 @@ def benchmark(num_batches, batch_size, avg_seqlen, max_seqlen, seqlen_stdev, is_
     from transformers import AutoModelForSequenceClassification
     assert avg_seqlen <= max_seqlen
 
-    lgr = setup_logger()
+    log_file = 'log.csv'
+    lgr = setup_logger(filename=log_file)
 
     seed = 1234
     torch.manual_seed(seed)
@@ -201,7 +202,6 @@ def benchmark(num_batches, batch_size, avg_seqlen, max_seqlen, seqlen_stdev, is_
     numtype = torch.float16 if is_half else torch.float32
     model_name = 'bert-large-cased' if is_large else 'bert-base-cased'
     device = 'cuda' if is_cuda else 'cpu' 
-    run_both = len(benchmarks) == 2 # run both hf and bt
 
     model = AutoModelForSequenceClassification.from_pretrained(model_name).eval().to(device).to(numtype)
     if(num_layers >= 0):
@@ -231,14 +231,6 @@ def benchmark(num_batches, batch_size, avg_seqlen, max_seqlen, seqlen_stdev, is_
             out2 = get_outputs(model, eval_inputs, masks, use_mask=use_mask)
         lgr.info(f"BT time per batch {bt_t}")
 
-    if("nn" in benchmarks):
-        model.bert.encoder = model.bert.encoder.to_torch()
-        model.bert.encoder = model.bert.encoder.eval().to(device).to(numtype)
-        # allow grad (so no no_grad) so use slow path
-        nn_t = benchmark_torch_function(is_cuda, model, eval_inputs, masks, use_mask=use_mask)
-        out3 = get_outputs(model, eval_inputs, masks, use_mask=use_mask)
-        lgr.info(f"NN time per batch {nn_t}")
-
     if("hf" in benchmarks and "bt" in benchmarks):
         lgr.info(f"BT as prop of HF {hf_t / bt_t}")
         n_failures, max_diff, n_tested = numerical_test(out, out2, 0, 1e-2) # absolute difference of 0.01 logit
@@ -248,23 +240,7 @@ def benchmark(num_batches, batch_size, avg_seqlen, max_seqlen, seqlen_stdev, is_
             test_str = f"HF/BT test FAIL {n_failures}/{n_tested}. Max diff is {max_diff}"
         lgr.info(test_str)
 
-    if("hf" in benchmarks and "nn" in benchmarks):
-        lgr.info(f"NN as prop of HF {hf_t / nn_t}")
-        n_failures, max_diff, n_tested = numerical_test(out, out3, 0, 1e-2) # absolute difference of 0.01 logit
-        if n_failures == 0:
-            test_str = f"HF/NNEncoder test PASS"
-        else:
-            test_str = f"HF/NNEncoder test FAIL {n_failures}/{n_tested}. Max diff is {max_diff}"
-        lgr.info(test_str)
-
-    if("bt" in benchmarks and "nn" in benchmarks):
-        lgr.info(f"BT as prop of NN {nn_t / bt_t}")
-        n_failures, max_diff, n_tested = numerical_test(out2, out3, 0, 1e-2) # absolute difference of 0.01 logit
-        if n_failures == 0:
-            test_str = f"NNencoder/BT test PASS"
-        else:
-            test_str = f"NNencoder/BT test FAIL {n_failures}/{n_tested}. Max diff is {max_diff}"
-        lgr.info(test_str)
+    print(f"Logged to {log_file}")
 
 if __name__=="__main__":
     parser = get_parser()

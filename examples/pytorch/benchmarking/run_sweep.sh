@@ -1,3 +1,4 @@
+#!/bin/bash
 
 # cpu small
 # python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 1 --avg-seqlen 32 --max-seqlen 32 --seqlen-stdev 0 --is-cuda False --is-large False --is-half False --use-mask False --benchmarks hf bt 
@@ -22,10 +23,6 @@
 # python3 benchmark_bettertransformer.py --num-batches 5 --batch-size 64 --avg-seqlen 192 --max-seqlen 256 --seqlen-stdev 0 --is-cuda False --is-large False --is-half False --use-mask True --benchmarks hf bt
 # python3 benchmark_bettertransformer.py --num-batches 5 --batch-size 64 --avg-seqlen 128 --max-seqlen 256 --seqlen-stdev 0 --is-cuda False --is-large False --is-half False --use-mask True --benchmarks hf bt
 # python3 benchmark_bettertransformer.py --num-batches 5 --batch-size 64 --avg-seqlen 64 --max-seqlen 256 --seqlen-stdev 0 --is-cuda False --is-large False --is-half False --use-mask True --benchmarks hf bt
-
-# to test to_torch
-# python3 benchmark_bettertransformer.py --num-batches 200 --batch-size 1 --avg-seqlen 32 --max-seqlen 32 --seqlen-stdev 0 --is-cuda True --is-large False --is-half True --use-mask False --benchmarks hf nn
-# python3 benchmark_bettertransformer.py --num-batches 50 --batch-size 64 --avg-seqlen 256 --max-seqlen 256 --seqlen-stdev 0 --is-cuda True --is-large False --is-half True --use-mask False --benchmarks hf bt nn
 
 # For profiling
 # python3 benchmark_bettertransformer.py --num-batches 100 --batch-size 64 --avg-seqlen 245 --max-seqlen 256 --seqlen-stdev 0 --is-cuda True --is-large False --num-layers 1 --is-half True --use-mask True --benchmarks bt hf

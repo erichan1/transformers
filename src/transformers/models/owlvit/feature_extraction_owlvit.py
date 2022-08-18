@@ -26,7 +26,6 @@ from ...utils import TensorType, is_torch_available, logging
 
 if is_torch_available():
     import torch
-    from torch import nn
 
 logger = logging.get_logger(__name__)
 
@@ -51,13 +50,15 @@ class OwlViTFeatureExtractor(FeatureExtractionMixin, ImageFeatureExtractionMixin
     Args:
         do_resize (`bool`, *optional*, defaults to `True`):
             Whether to resize the shorter edge of the input to a certain `size`.
-        size (`int`, *optional*, defaults to 768):
-            Resize the shorter edge of the input to the given size. Only has an effect if `do_resize` is set to `True`.
+        size (`int` or `Tuple[int, int]`, *optional*, defaults to (768, 768)):
+            The size to use for resizing the image. Only has an effect if `do_resize` is set to `True`. If `size` is a
+            sequence like (h, w), output size will be matched to this. If `size` is an int, then image will be resized
+            to (size, size).
         resample (`int`, *optional*, defaults to `PIL.Image.BICUBIC`):
             An optional resampling filter. This can be one of `PIL.Image.NEAREST`, `PIL.Image.BOX`,
             `PIL.Image.BILINEAR`, `PIL.Image.HAMMING`, `PIL.Image.BICUBIC` or `PIL.Image.LANCZOS`. Only has an effect
             if `do_resize` is set to `True`.
-        do_center_crop (`bool`, *optional*, defaults to `True`):
+        do_center_crop (`bool`, *optional*, defaults to `False`):
             Whether to crop the input at the center. If the input size is smaller than `crop_size` along any edge, the
             image is padded with 0's and then center cropped.
         crop_size (`int`, *optional*, defaults to 768):
@@ -75,10 +76,10 @@ class OwlViTFeatureExtractor(FeatureExtractionMixin, ImageFeatureExtractionMixin
     def __init__(
         self,
         do_resize=True,
-        size=768,
+        size=(768, 768),
         resample=Image.BICUBIC,
         crop_size=768,
-        do_center_crop=True,
+        do_center_crop=False,
         do_normalize=True,
         image_mean=None,
         image_std=None,
@@ -109,18 +110,19 @@ class OwlViTFeatureExtractor(FeatureExtractionMixin, ImageFeatureExtractionMixin
             `List[Dict]`: A list of dictionaries, each dictionary containing the scores, labels and boxes for an image
             in the batch as predicted by the model.
         """
-        out_logits, out_bbox = outputs.logits, outputs.pred_boxes
+        logits, boxes = outputs.logits, outputs.pred_boxes
 
-        if len(out_logits) != len(target_sizes):
+        if len(logits) != len(target_sizes):
             raise ValueError("Make sure that you pass in as many target sizes as the batch dimension of the logits")
         if target_sizes.shape[1] != 2:
             raise ValueError("Each element of target_sizes must contain the size (h, w) of each image of the batch")
 
-        prob = nn.functional.softmax(out_logits, -1)
-        scores, labels = prob[..., :-1].max(-1)
+        probs = torch.max(logits, dim=-1)
+        scores = torch.sigmoid(probs.values)
+        labels = probs.indices
 
         # Convert to [x0, y0, x1, y1] format
-        boxes = center_to_corners_format(out_bbox)
+        boxes = center_to_corners_format(boxes)
 
         # Convert from relative [0, 1] to absolute [0, height] coordinates
         img_h, img_w = target_sizes.unbind(1)
@@ -195,7 +197,7 @@ class OwlViTFeatureExtractor(FeatureExtractionMixin, ImageFeatureExtractionMixin
         # transformations (resizing + center cropping + normalization)
         if self.do_resize and self.size is not None and self.resample is not None:
             images = [
-                self.resize(image=image, size=self.size, resample=self.resample, default_to_square=False)
+                self.resize(image=image, size=self.size, resample=self.resample, default_to_square=True)
                 for image in images
             ]
         if self.do_center_crop and self.crop_size is not None:
